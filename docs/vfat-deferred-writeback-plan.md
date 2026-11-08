@@ -1,10 +1,10 @@
-# vfat 延迟写回设计（仅方案，尚未实现）
+# vfat 延迟写回设计（本地实现草稿）
 
-状态：设计阶段。目标基线：Linux 6.1.158 + PREEMPT_RT rt58；参考配置：`configs/company-arm64-linux-6.1.158.config`。本文件不代表功能已经验证。
+状态：**本地实现草稿已写入工作区，未编译、未测试、未提交、未推送**。目标基线：Linux 6.1.158 + PREEMPT_RT rt58；参考配置：`configs/company-arm64-linux-6.1.158.config`。本文件不代表功能已经验证。
 
 ## 1. 目标与边界
 
-用户态对指定 vfat 文件系统实例开启/关闭“写入只保留在内存，关闭时集中提交”的模式。缓存期间，普通文件数据、目录项、FAT 表和 FSInfo 的修改对同挂载文件系统上的后续读取可见，但不提交到底层设备。关闭模式时统一落盘并报告实际错误。
+用户态开启 vfat 延迟写回模式，在正常后台写回和 Buffer Head 同步路径中延迟设备写入。根据产品取舍，不拦截内存压力下的 vmscan 回收写盘，因此缓存期间不保证绝对零落盘。关闭时尝试集中同步并报告错误。
 
 沿用 Linux 的 Page Cache（页缓存）、Folio（页缓存单元）、XArray（索引结构）、buffer_head（块缓冲头）及 Dirty（脏页）管理。缓存时间和数据量有限，不引入独立数据副本、通用事务系统或新的 Page/BH 状态位。
 
@@ -34,7 +34,7 @@
 | 数据类别 | 实际基线入口 | 设计处理 |
 | --- | --- | --- |
 | 普通 `write()` | `fs/fat/inode.c:fat_write_end` → `generic_write_end` → `block_write_end` → `__block_commit_write` → `mark_buffer_dirty` | 原样标 `BH_Dirty/PG_dirty`，在标脏前同步设置 `PG_owner_priv_1` |
-| `mmap(MAP_SHARED)` 修改 | `fat_aops.dirty_folio = block_dirty_folio` | 保持原生 Dirty，并设置 `PG_owner_priv_1` |
+| `mmap(MAP_SHARED)` 修改 | `fat_aops.dirty_folio = fat_dirty_folio` | 保持原生 Dirty，并设置 `PG_owner_priv_1` |
 | FAT 表更新 | `fs/fat/fatent.c` → `mark_buffer_dirty_inode` | 识别所属受控设备页，原样标 BH/Page Dirty，并设置 OwnerPriv1 |
 | 目录项创建、删除、重命名 | `fs/fat/dir.c`、`namei_vfat.c` 等使用 `mark_buffer_dirty_inode`、`mark_buffer_dirty` | 与 FAT 表一致 |
 | 文件大小、时间戳、起始簇 | `mark_inode_dirty` → `fat_write_inode` → `mark_buffer_dirty` | 保留 inode Dirty 流程；最终目录项 BH 走相同标记 |
@@ -42,14 +42,13 @@
 
 关键点：`write_begin` 只是获取/准备页，标脏发生于后续提交路径。不要在 `fat_write_end` 返回之后“反向清 Dirty”；在真正标脏入口完成联合设置，避免写回与标记之间的竞态。还要处理 `mark_buffer_dirty` 对“已 Dirty BH”直接返回的快速路径，确保延迟标记不会因此漏置。
 
-优先提供小型通用 helper，集中处理“确定目标 SB + 设置 OwnerPriv1 + 保持原生 Dirty”的逻辑。FAT 只传入归属或配置开关；避免各元数据函数自行维护延迟缓存。
+FAT 的 `.dirty_folio` 回调设置文件页标记，通用 `mark_buffer_dirty()` 设置 Buffer Head 所在页标记，仍保留原生 Dirty 语义。
 
 ## 4. 拦截真实回写（仅跳过，不能把页伪装成 Clean）
 
 | 文件与函数 | 改动方向 |
 | --- | --- |
 | `mm/page-writeback.c:write_cache_pages` | 在 `clear_page_dirty_for_io()` **之前**检查受控延迟页。命中时解锁并跳过，不消耗脏状态、不下发 `writepage` |
-| `mm/vmscan.c:pageout` | 在 `folio_clear_dirty_for_io()` 前识别延迟页并拒绝本次回收写回，保持 Dirty |
 | `fs/buffer.c:write_dirty_buffer` | 在清 `BH_Dirty` 前检查受控延迟 BH 所在 Page；命中时返回但不提交 I/O |
 | `fs/buffer.c:__sync_dirty_buffer` | 同上，返回逻辑成功，保留 `BH_Dirty` |
 | `block/fops.c:blkdev_writepage/writepages` | 应经由通用 Page 回写/回收闸门；验证不存在绕过路径 |
@@ -57,20 +56,20 @@
 
 这几处是可复用的通用层改动，不打算在 `fat_sync_bhs`、`fat_mirror_bhs` 等每个调用点分别插入缓存判断。现有 `fat_sync_bhs()` 直接调用 `write_dirty_buffer()`，所以只拦 `sync_dirty_buffer()` 不够；`fsync_buffers_list()` 也会使用 `write_dirty_buffer()`。
 
-需要审查并约束底层其它直接 `submit_bh` / `submit_bio` 写入或 Discard 请求；缓存保护范围只针对明确绑定的 FAT 文件系统与底层块设备，不改变其他文件系统行为。
+缓存保护范围限于已拦截的正常写回与 Buffer Head 路径；不拦截 `vmscan`，也不额外处理产品不会触发的 FITRIM、discard、remount 与卸载过程。
 
 ## 5. 用户态开关与提交
 
 ### 开启
 
 1. 通过 vfat 的目录 ioctl 指定文件系统实例；校验权限和模式状态。
-2. 等待旧的在途写入、先同步已有脏数据；确保本轮新数据不会混入旧 I/O。
+2. 产品保证开启前没有在途写入，开启时直接置位，不调用 `freeze_super()`。
 3. 原子切换到缓存模式；后续标脏保持 `PG_dirty` 并设置 `PG_owner_priv_1`。普通 `fsync/sync/syncfs` 无实际持久化写入。
 
 ### 关闭
 
-1. 暂时隔离新的修改并等待在途标脏收敛，避免切换竞态。
-2. 收敛需要序列化的 inode 元数据，然后将本轮受控 Page（包括设备缓冲区所在 Page）的 `PG_owner_priv_1` 清除。Dirty/BH_Dirty 保持不变；可复用 XArray Dirty 索引定位，具体遍历应按文件映射和设备映射分别实现。
+1. 关闭时机不确定、可能存在并发写入，因此暂时保留 `freeze_super()` 隔离；该函数会先在延迟模式仍开启时执行一次同步。
+2. 收敛需要序列化的 inode 元数据，解除超级块的延迟模式开关，让原生写回逻辑允许回写全部仍标脏的 Page/BH。目前未逐页清除旧 `PG_owner_priv_1` 位；回写判断同时要求超级块处于延迟模式，因此关闭后不会被该位阻止落盘。
 3. 解除延迟拦截后走原生 `sync_filesystem(sb)`，等待设备回写并检查错误。调用须符合 `s_umount` 等锁条件，不能直接在普通文件 ioctl 中随意调用。
 4. 成功后恢复普通模式并放行写入；出错时保留尚未成功写入的脏状态并向用户态返回错误，不谎称已提交。
 
@@ -86,10 +85,10 @@
 
 - **通用状态/接口**：`include/linux/page-flags.h`（仅复用已有 OwnerPriv1 API）、`include/linux/fs.h`（文件系统实例开关/接口，具体方式待实现）；不新增 Page/BH 位。
 - **通用标脏与 BH**：`fs/buffer.c`、必要时 `include/linux/buffer_head.h`。
-- **通用回写与回收**：`mm/page-writeback.c`、`mm/vmscan.c`；如需清理特殊标志，再审查 `mm/truncate.c`。
-- **FAT 适配及 ioctl**：优先集中在 `fs/fat/file.c`、`fs/fat/inode.c`；只有实际确认无法在通用标脏层识别归属时才调整其它 FAT 调用点。
+- **通用回写**：`mm/page-writeback.c`；不改 `mm/vmscan.c`。
+- **FAT 适配及 ioctl**：`fs/fat/file.c`、`fs/fat/inode.c` 和私有 `fs/fat/fat.h`。
 
-尚未编写补丁；任何额外的内核插桩必须能对应到已经确认的绕过路径。
+本地工作区已按上述主要改动点编写实现；尚未执行编译或测试。任何额外的内核插桩必须对应到已确认的绕过路径。
 
 ## 7. 最小验证矩阵（后续实施时）
 
@@ -97,8 +96,19 @@
 2. `mkdir/rename/unlink`、长文件名、FAT 链和 FSInfo：缓存期间不写物理介质。
 3. `mmap(MAP_SHARED)`、`msync`：内容可见且不提前落盘。
 4. `O_DIRECT` 读写与 `O_SYNC`、`fsync/fdatasync/sync/syncfs`：不发生旁路写入。
-5. 后台 Flusher、内存回收和 `drop_caches`：未提交修改不丢失。
+5. 后台 Flusher 跳过受控延迟页；内存压力下 `vmscan` 可能提前写盘。
 6. 禁用缓存后：数据和元数据落盘，重新挂载验证结构完整。
 7. 用独立测试镜像和块 I/O trace 检查真实写入；禁止直接在公司产品分区上做破坏性测试。
 
 当前选择：**保留 `PG_dirty` + 复用 `PG_owner_priv_1`，保留 `BH_Dirty`，不新增 Page/BH 标志位**。先沿这条路径验证，不采用“只置特殊标志、不置 Dirty”的方案。
+
+## 8. 当前本地草稿与已知限制
+
+仅本地工作区修改，**未提交、未推送、未编译、未测试**。公开 GitHub 的 `main` 仍是未实现功能的基线提交。
+
+- 内部 ioctl：`FAT_IOCTL_SET_DEFERRED_WRITEBACK` 定义于 `fs/fat/fat.h`，在 vfat 文件或目录 FD 上以指向 `__u32` 的参数调用，`1` 开启、`0` 关闭；要求 `CAP_SYS_ADMIN`。用户态需自行使用一致的命令编号。
+- 超级块状态：`SB_I_DEFERRED_WRITEBACK`；开启前保证无写入并直接置位；关闭时使用 `freeze_super/thaw_super` 和 `sync_filesystem`。
+- 文件数据与设备 BH：保留 `PG_dirty/BH_Dirty`，用 `PG_owner_priv_1` 标注延迟修改。正常通用回写和 BH 同步跳过写盘，但 `vmscan` 允许内存压力下写盘。
+- vfat 适配：`O_DIRECT` 读写尽量回退到缓存路径；`fsync` 返回逻辑成功。不再额外处理 FITRIM、discard、remount 或卸载。
+- 已知限制：无法保证掉电保存纯内存数据；不能保证多扇区原子提交；原始块设备被直接访问时不在文件系统透明性承诺范围内；实际回写路径及锁序还需在后续获得测试授权时验证；页脏比例过高会触发普通 Dirty 限速。
+- 当前复用的 `PG_owner_priv_1` 在关闭模式后不会额外扫描逐页清理，必须注意其仍存在于当前内存页直至生命周期结束（回写判断需同时检查 SB 开关）。

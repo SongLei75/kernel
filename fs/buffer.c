@@ -1080,6 +1080,9 @@ void mark_buffer_dirty(struct buffer_head *bh)
 {
 	WARN_ON_ONCE(!buffer_uptodate(bh));
 
+	if (unlikely(page_deferred_writeback_enabled(bh->b_page)))
+		SetPageOwnerPriv1(bh->b_page);
+
 	trace_block_dirty_buffer(bh);
 
 	/*
@@ -2711,6 +2714,10 @@ EXPORT_SYMBOL(submit_bh);
 void write_dirty_buffer(struct buffer_head *bh, blk_opf_t op_flags)
 {
 	lock_buffer(bh);
+	if (unlikely(page_deferred_writeback(bh->b_page))) {
+		unlock_buffer(bh);
+		return;
+	}
 	if (!test_clear_buffer_dirty(bh)) {
 		unlock_buffer(bh);
 		return;
@@ -2730,6 +2737,10 @@ int __sync_dirty_buffer(struct buffer_head *bh, blk_opf_t op_flags)
 {
 	WARN_ON(atomic_read(&bh->b_count) < 1);
 	lock_buffer(bh);
+	if (unlikely(page_deferred_writeback(bh->b_page))) {
+		unlock_buffer(bh);
+		return 0;
+	}
 	if (test_clear_buffer_dirty(bh)) {
 		/*
 		 * The bh should be mapped, but it might not be if the

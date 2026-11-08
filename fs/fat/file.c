@@ -16,6 +16,7 @@
 #include <linux/fsnotify.h>
 #include <linux/security.h>
 #include <linux/falloc.h>
+#include <linux/mutex.h>
 #include "fat.h"
 
 static long fat_fallocate(struct file *file, int mode,
@@ -153,6 +154,60 @@ static int fat_ioctl_fitrim(struct inode *inode, unsigned long arg)
 	return 0;
 }
 
+/*
+ * Mode transitions are serialized. The caller enables the mode before any
+ * writes begin; closing may race with writers, so only closing freezes.
+ */
+static DEFINE_MUTEX(fat_deferred_mode_lock);
+
+static int fat_set_deferred_writeback(struct file *file, u32 enabled)
+{
+	struct super_block *sb = file_inode(file)->i_sb;
+	bool active;
+	int ret, thaw_ret;
+
+	if (!capable(CAP_SYS_ADMIN))
+		return -EPERM;
+	if (!MSDOS_SB(sb)->options.isvfat)
+		return -EOPNOTSUPP;
+	if (sb_rdonly(sb))
+		return -EROFS;
+	if (enabled > 1)
+		return -EINVAL;
+
+	mutex_lock(&fat_deferred_mode_lock);
+	active = !!(READ_ONCE(sb->s_iflags) & SB_I_DEFERRED_WRITEBACK);
+	if (active == !!enabled) {
+		ret = 0;
+		goto out;
+	}
+
+	if (enabled) {
+		/* No writes are in flight before enabling the mode. */
+		set_bit(SB_I_DEFERRED_WRITEBACK_BIT, &sb->s_iflags);
+		ret = 0;
+		goto out;
+	}
+
+	/* Closing can race with writes; finish them before releasing writeback. */
+	ret = freeze_super(sb);
+	if (ret)
+		goto out;
+
+	clear_bit(SB_I_DEFERRED_WRITEBACK_BIT, &sb->s_iflags);
+	/* All deferred pages retain PG_dirty / BH_Dirty. */
+	down_read(&sb->s_umount);
+	ret = sync_filesystem(sb);
+	up_read(&sb->s_umount);
+
+	thaw_ret = thaw_super(sb);
+	if (!ret)
+		ret = thaw_ret;
+out:
+	mutex_unlock(&fat_deferred_mode_lock);
+	return ret;
+}
+
 long fat_generic_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 {
 	struct inode *inode = file_inode(filp);
@@ -165,6 +220,13 @@ long fat_generic_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		return fat_ioctl_set_attributes(filp, user_attr);
 	case FAT_IOCTL_GET_VOLUME_ID:
 		return fat_ioctl_get_volume_id(inode, user_attr);
+	case FAT_IOCTL_SET_DEFERRED_WRITEBACK: {
+		u32 enabled;
+
+		if (get_user(enabled, user_attr))
+			return -EFAULT;
+		return fat_set_deferred_writeback(filp, enabled);
+	}
 	case FITRIM:
 		return fat_ioctl_fitrim(inode, arg);
 	default:
@@ -187,6 +249,9 @@ int fat_file_fsync(struct file *filp, loff_t start, loff_t end, int datasync)
 {
 	struct inode *inode = filp->f_mapping->host;
 	int err;
+
+	if (READ_ONCE(inode->i_sb->s_iflags) & SB_I_DEFERRED_WRITEBACK)
+		return 0;	/* Memory-only durability while enabled. */
 
 	err = __generic_file_fsync(filp, start, end, datasync);
 	if (err)

@@ -266,6 +266,10 @@ static ssize_t fat_direct_IO(struct kiocb *iocb, struct iov_iter *iter)
 	loff_t offset = iocb->ki_pos;
 	ssize_t ret;
 
+	/* Both direct reads and writes must observe the deferred page cache. */
+	if (READ_ONCE(inode->i_sb->s_iflags) & SB_I_DEFERRED_WRITEBACK)
+		return 0;
+
 	if (iov_iter_rw(iter) == WRITE) {
 		/*
 		 * FIXME: blockdev_direct_IO() doesn't use ->write_begin(),
@@ -341,8 +345,15 @@ int fat_block_truncate_page(struct inode *inode, loff_t from)
 	return block_truncate_page(inode->i_mapping, from, fat_get_block);
 }
 
+static bool fat_dirty_folio(struct address_space *mapping, struct folio *folio)
+{
+	if (READ_ONCE(mapping->host->i_sb->s_iflags) & SB_I_DEFERRED_WRITEBACK)
+		SetPageOwnerPriv1(&folio->page);
+	return block_dirty_folio(mapping, folio);
+}
+
 static const struct address_space_operations fat_aops = {
-	.dirty_folio	= block_dirty_folio,
+	.dirty_folio	= fat_dirty_folio,
 	.invalidate_folio = block_invalidate_folio,
 	.read_folio	= fat_read_folio,
 	.readahead	= fat_readahead,

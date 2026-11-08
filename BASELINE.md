@@ -1,6 +1,6 @@
 # Kernel baseline provenance
 
-This is an independent development tree derived from the checked company baseline directory. No deferred-writeback feature has been implemented yet.
+This is an independent development tree derived from the checked company baseline directory. The initial GitHub commit contains no deferred-writeback implementation. Uncommitted local working-tree changes now contain an experimental implementation (not compiled or tested).
 
 | Item | Value |
 | --- | --- |

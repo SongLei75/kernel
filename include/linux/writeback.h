@@ -376,6 +376,9 @@ void tag_pages_for_writeback(struct address_space *mapping,
 int write_cache_pages(struct address_space *mapping,
 		      struct writeback_control *wbc, writepage_t writepage,
 		      void *data);
+/* A dirty PageOwnerPriv1 page may temporarily defer physical writeback. */
+bool page_deferred_writeback_enabled(struct page *page);
+bool page_deferred_writeback(struct page *page);
 int do_writepages(struct address_space *mapping, struct writeback_control *wbc);
 void writeback_set_ratelimit(void);
 void tag_pages_for_writeback(struct address_space *mapping,

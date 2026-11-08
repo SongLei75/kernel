@@ -42,6 +42,38 @@
 #include "internal.h"
 
 /*
+ * PG_owner_priv_1 retains its filesystem-private meaning.  Only a marked
+ * page belonging to a superblock with deferred writeback enabled is special.
+ * For block-device buffer pages, the owning filesystem is bd_super.
+ */
+bool page_deferred_writeback_enabled(struct page *page)
+{
+	struct address_space *mapping = page_mapping(page);
+	struct inode *inode;
+
+	if (!mapping || !(inode = mapping->host))
+		return false;
+
+	if (!S_ISBLK(inode->i_mode))
+		return READ_ONCE(inode->i_sb->s_iflags) & SB_I_DEFERRED_WRITEBACK;
+
+	{
+		struct super_block *sb;
+		bool active;
+
+		rcu_read_lock();
+		sb = READ_ONCE(I_BDEV(inode)->bd_super);
+		active = sb &&
+			(READ_ONCE(sb->s_iflags) & SB_I_DEFERRED_WRITEBACK);
+		rcu_read_unlock();
+		return active;
+	}
+}
+bool page_deferred_writeback(struct page *page)
+{
+	return PageOwnerPriv1(page) && page_deferred_writeback_enabled(page);
+}
+/*
  * Sleep at most 200ms at a time in balance_dirty_pages().
  */
 #define MAX_PAUSE		max(HZ/5, 1)
@@ -2375,6 +2407,8 @@ continue_unlock:
 			}
 
 			BUG_ON(PageWriteback(page));
+			if (unlikely(page_deferred_writeback(page)))
+				goto continue_unlock;
 			if (!clear_page_dirty_for_io(page))
 				goto continue_unlock;
 

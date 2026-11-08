@@ -17,6 +17,8 @@
 #define VFAT_SFN_CREATE_WIN95	0x0100 /* emulate win95 rule for create */
 #define VFAT_SFN_CREATE_WINNT	0x0200 /* emulate winnt rule for create */
 
+#define FAT_IOCTL_SET_DEFERRED_WRITEBACK	_IOW('r', 0x30, __u32)
+
 #define FAT_ERRORS_CONT		1      /* ignore error and continue */
 #define FAT_ERRORS_PANIC	2      /* panic on error */
 #define FAT_ERRORS_RO		3      /* remount r/o on error */
