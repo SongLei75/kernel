@@ -61,7 +61,7 @@ static inline void fat_dir_readahead(struct inode *dir, sector_t iblock,
 	if (!is_fat32(sbi) && (dir->i_ino == MSDOS_ROOT_INO))
 		return;
 
-	bh = sb_find_get_block(sb, phys);
+	bh = dc_sb_find_get_block(sb, phys);
 	if (bh == NULL || !buffer_uptodate(bh)) {
 		for (sec = 0; sec < sbi->sec_per_clus; sec++)
 			sb_breadahead(sb, phys + sec);
@@ -97,7 +97,7 @@ next:
 
 	fat_dir_readahead(dir, iblock, phys);
 
-	*bh = sb_bread(sb, phys);
+	*bh = dc_sb_bread(sb, phys);
 	if (*bh == NULL) {
 		fat_msg_ratelimit(sb, KERN_ERR,
 			"Directory bread(block %llu) failed", (llu)phys);
@@ -1089,7 +1089,7 @@ static int fat_zeroed_cluster(struct inode *dir, sector_t blknr, int nr_used,
 	blknr += nr_used;
 	n = nr_used;
 	while (blknr < last_blknr) {
-		bhs[n] = sb_getblk(sb, blknr);
+		bhs[n] = dc_sb_getblk(sb, blknr);
 		if (!bhs[n]) {
 			err = -ENOMEM;
 			goto error;
@@ -1146,7 +1146,7 @@ int fat_alloc_new_dir(struct inode *dir, struct timespec64 *ts)
 		goto error;
 
 	blknr = fat_clus_to_blknr(sbi, cluster);
-	bhs[0] = sb_getblk(sb, blknr);
+	bhs[0] = dc_sb_getblk(sb, blknr);
 	if (!bhs[0]) {
 		err = -ENOMEM;
 		goto error_free;
@@ -1229,7 +1229,7 @@ static int fat_add_new_entries(struct inode *dir, void *slots, int nr_slots,
 		start_blknr = blknr = fat_clus_to_blknr(sbi, cluster[i]);
 		last_blknr = start_blknr + sbi->sec_per_clus;
 		while (blknr < last_blknr) {
-			bhs[n] = sb_getblk(sb, blknr);
+			bhs[n] = dc_sb_getblk(sb, blknr);
 			if (!bhs[n]) {
 				err = -ENOMEM;
 				goto error_nomem;

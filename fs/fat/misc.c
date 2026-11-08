@@ -74,7 +74,7 @@ int fat_clusters_flush(struct super_block *sb)
 	if (!is_fat32(sbi))
 		return 0;
 
-	bh = sb_bread(sb, sbi->fsinfo_sector);
+	bh = dc_sb_bread(sb, sbi->fsinfo_sector);
 	if (bh == NULL) {
 		fat_msg(sb, KERN_ERR, "bread failed in fat_clusters_flush");
 		return -EIO;

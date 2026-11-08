@@ -376,6 +376,7 @@ void tag_pages_for_writeback(struct address_space *mapping,
 int write_cache_pages(struct address_space *mapping,
 		      struct writeback_control *wbc, writepage_t writepage,
 		      void *data);
+bool deferred_cache_page_active(struct page *page);
 int do_writepages(struct address_space *mapping, struct writeback_control *wbc);
 void writeback_set_ratelimit(void);
 void tag_pages_for_writeback(struct address_space *mapping,

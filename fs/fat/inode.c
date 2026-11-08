@@ -232,7 +232,7 @@ static int fat_write_begin(struct file *file, struct address_space *mapping,
 	int err;
 
 	*pagep = NULL;
-	err = cont_write_begin(file, mapping, pos, len,
+	err = dc_cont_write_begin(file, mapping, pos, len,
 				pagep, fsdata, fat_get_block,
 				&MSDOS_I(mapping->host)->mmu_private);
 	if (err < 0)
@@ -342,7 +342,7 @@ int fat_block_truncate_page(struct inode *inode, loff_t from)
 }
 
 static const struct address_space_operations fat_aops = {
-	.dirty_folio	= block_dirty_folio,
+	.dirty_folio	= dc_block_dirty_folio,
 	.invalidate_folio = block_invalidate_folio,
 	.read_folio	= fat_read_folio,
 	.readahead	= fat_readahead,
@@ -686,7 +686,7 @@ static void fat_set_state(struct super_block *sb,
 		return;
 	}
 
-	bh = sb_bread(sb, 0);
+	bh = dc_sb_bread(sb, 0);
 	if (bh == NULL) {
 		fat_msg(sb, KERN_ERR, "unable to read boot sector "
 			"to mark fs as dirty");
@@ -867,7 +867,7 @@ retry:
 		return 0;
 
 	fat_get_blknr_offset(sbi, i_pos, &blocknr, &offset);
-	bh = sb_bread(sb, blocknr);
+	bh = dc_sb_bread(sb, blocknr);
 	if (!bh) {
 		fat_msg(sb, KERN_ERR, "unable to read inode block "
 		       "for updating (i_pos %lld)", i_pos);
@@ -1648,7 +1648,7 @@ int fat_fill_super(struct super_block *sb, void *data, int silent, int isvfat,
 
 	error = -EIO;
 	sb_min_blocksize(sb, 512);
-	bh = sb_bread(sb, 0);
+	bh = dc_sb_bread(sb, 0);
 	if (bh == NULL) {
 		fat_msg(sb, KERN_ERR, "unable to read boot sector");
 		goto out_fail;
@@ -1686,7 +1686,7 @@ int fat_fill_super(struct super_block *sb, void *data, int silent, int isvfat,
 		}
 
 		/* Verify that the larger boot sector is fully readable */
-		bh_resize = sb_bread(sb, 0);
+		bh_resize = dc_sb_bread(sb, 0);
 		if (bh_resize == NULL) {
 			fat_msg(sb, KERN_ERR, "unable to read boot sector"
 			       " (logical sector size = %lu)",
@@ -1729,7 +1729,7 @@ int fat_fill_super(struct super_block *sb, void *data, int silent, int isvfat,
 		if (sbi->fsinfo_sector == 0)
 			sbi->fsinfo_sector = 1;
 
-		fsinfo_bh = sb_bread(sb, sbi->fsinfo_sector);
+		fsinfo_bh = dc_sb_bread(sb, sbi->fsinfo_sector);
 		if (fsinfo_bh == NULL) {
 			fat_msg(sb, KERN_ERR, "bread failed, FSINFO block"
 			       " (sector = %lu)", sbi->fsinfo_sector);

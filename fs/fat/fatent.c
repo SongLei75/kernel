@@ -74,7 +74,7 @@ static int fat12_ent_bread(struct super_block *sb, struct fat_entry *fatent,
 	WARN_ON(blocknr < MSDOS_SB(sb)->fat_start);
 	fatent->fat_inode = MSDOS_SB(sb)->fat_inode;
 
-	bhs[0] = sb_bread(sb, blocknr);
+	bhs[0] = dc_sb_bread(sb, blocknr);
 	if (!bhs[0])
 		goto err;
 
@@ -83,7 +83,7 @@ static int fat12_ent_bread(struct super_block *sb, struct fat_entry *fatent,
 	else {
 		/* This entry is block boundary, it needs the next block */
 		blocknr++;
-		bhs[1] = sb_bread(sb, blocknr);
+		bhs[1] = dc_sb_bread(sb, blocknr);
 		if (!bhs[1])
 			goto err_brelse;
 		fatent->nr_bhs = 2;
@@ -106,7 +106,7 @@ static int fat_ent_bread(struct super_block *sb, struct fat_entry *fatent,
 
 	WARN_ON(blocknr < MSDOS_SB(sb)->fat_start);
 	fatent->fat_inode = MSDOS_SB(sb)->fat_inode;
-	fatent->bhs[0] = sb_bread(sb, blocknr);
+	fatent->bhs[0] = dc_sb_bread(sb, blocknr);
 	if (!fatent->bhs[0]) {
 		fat_msg_ratelimit(sb, KERN_ERR, "FAT read failed (blocknr %llu)",
 				  (llu)blocknr);
@@ -385,7 +385,7 @@ static int fat_mirror_bhs(struct super_block *sb, struct buffer_head **bhs,
 		sector_t backup_fat = sbi->fat_length * copy;
 
 		for (n = 0; n < nr_bhs; n++) {
-			c_bh = sb_getblk(sb, backup_fat + bhs[n]->b_blocknr);
+			c_bh = dc_sb_getblk(sb, backup_fat + bhs[n]->b_blocknr);
 			if (!c_bh) {
 				err = -ENOMEM;
 				goto error;

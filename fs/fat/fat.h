@@ -2,6 +2,8 @@
 #ifndef _FAT_H
 #define _FAT_H
 
+#include "deferred_cache.h"
+
 #include <linux/buffer_head.h>
 #include <linux/nls.h>
 #include <linux/hash.h>

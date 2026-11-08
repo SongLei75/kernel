@@ -165,6 +165,15 @@ long fat_generic_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		return fat_ioctl_set_attributes(filp, user_attr);
 	case FAT_IOCTL_GET_VOLUME_ID:
 		return fat_ioctl_get_volume_id(inode, user_attr);
+	case DC_IOCTL_SET_MODE: {
+		u32 enabled;
+
+		if (get_user(enabled, user_attr))
+			return -EFAULT;
+		if (enabled > 1)
+			return -EINVAL;
+		return dc_set_mode(inode->i_sb, enabled);
+	}
 	case FITRIM:
 		return fat_ioctl_fitrim(inode, arg);
 	default:
@@ -188,6 +197,9 @@ int fat_file_fsync(struct file *filp, loff_t start, loff_t end, int datasync)
 	struct inode *inode = filp->f_mapping->host;
 	int err;
 
+	if (dc_mode_enabled(inode->i_sb))
+		return 0; /* Only acknowledge the in-memory update. */
+
 	err = __generic_file_fsync(filp, start, end, datasync);
 	if (err)
 		return err;
@@ -200,10 +212,26 @@ int fat_file_fsync(struct file *filp, loff_t start, loff_t end, int datasync)
 }
 
 
+static ssize_t fat_dc_read_iter(struct kiocb *iocb, struct iov_iter *to)
+{
+	if ((iocb->ki_flags & IOCB_DIRECT) &&
+	    dc_mode_enabled(file_inode(iocb->ki_filp)->i_sb))
+		return -EOPNOTSUPP;
+	return generic_file_read_iter(iocb, to);
+}
+
+static ssize_t fat_dc_write_iter(struct kiocb *iocb, struct iov_iter *from)
+{
+	if ((iocb->ki_flags & IOCB_DIRECT) &&
+	    dc_mode_enabled(file_inode(iocb->ki_filp)->i_sb))
+		return -EOPNOTSUPP;
+	return generic_file_write_iter(iocb, from);
+}
+
 const struct file_operations fat_file_operations = {
 	.llseek		= generic_file_llseek,
-	.read_iter	= generic_file_read_iter,
-	.write_iter	= generic_file_write_iter,
+	.read_iter	= fat_dc_read_iter,
+	.write_iter	= fat_dc_write_iter,
 	.mmap		= generic_file_mmap,
 	.release	= fat_file_release,
 	.unlocked_ioctl	= fat_generic_ioctl,

@@ -41,6 +41,32 @@
 
 #include "internal.h"
 
+/* Both file-cache pages and block-device buffer pages can be managed. */
+bool deferred_cache_page_active(struct page *page)
+{
+	struct address_space *mapping;
+	struct inode *inode;
+	struct super_block *sb;
+	bool active;
+
+	if (!PageOwnerPriv1(page))
+		return false;
+	mapping = page_mapping(page);
+	if (!mapping)
+		return false;
+	inode = mapping->host;
+	if (!inode)
+		return false;
+	if (!S_ISBLK(inode->i_mode))
+		return READ_ONCE(inode->i_sb->s_iflags) & SB_I_DEFERRED_CACHE;
+
+	rcu_read_lock();
+	sb = READ_ONCE(I_BDEV(inode)->bd_super);
+	active = sb && (READ_ONCE(sb->s_iflags) & SB_I_DEFERRED_CACHE);
+	rcu_read_unlock();
+	return active;
+}
+
 /*
  * Sleep at most 200ms at a time in balance_dirty_pages().
  */
@@ -2375,6 +2401,8 @@ continue_unlock:
 			}
 
 			BUG_ON(PageWriteback(page));
+			if (unlikely(deferred_cache_page_active(page)))
+				goto continue_unlock;
 			if (!clear_page_dirty_for_io(page))
 				goto continue_unlock;
 
