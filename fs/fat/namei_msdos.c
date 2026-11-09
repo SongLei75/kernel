@@ -524,7 +524,7 @@ static int do_msdos_rename(struct inode *old_dir, unsigned char *old_name,
 
 	if (update_dotdot) {
 		fat_set_start(dotdot_de, MSDOS_I(new_dir)->i_logstart);
-		mark_buffer_dirty_inode(dotdot_bh, old_inode);
+		pagectl_mark_buffer_dirty_inode(dotdot_bh, old_inode);
 		if (IS_DIRSYNC(new_dir)) {
 			err = sync_dirty_buffer(dotdot_bh);
 			if (err)
@@ -564,7 +564,7 @@ error_dotdot:
 
 	if (update_dotdot) {
 		fat_set_start(dotdot_de, MSDOS_I(old_dir)->i_logstart);
-		mark_buffer_dirty_inode(dotdot_bh, old_inode);
+		pagectl_mark_buffer_dirty_inode(dotdot_bh, old_inode);
 		corrupt |= sync_dirty_buffer(dotdot_bh);
 	}
 error_inode:
@@ -662,11 +662,17 @@ static struct dentry *msdos_mount(struct file_system_type *fs_type,
 	return mount_bdev(fs_type, flags, dev_name, data, msdos_fill_super);
 }
 
+static void msdos_pagectl_kill_sb(struct super_block *sb)
+{
+	pagectl_shutdown(sb);
+	kill_block_super(sb);
+}
+
 static struct file_system_type msdos_fs_type = {
 	.owner		= THIS_MODULE,
 	.name		= "msdos",
 	.mount		= msdos_mount,
-	.kill_sb	= kill_block_super,
+	.kill_sb	= msdos_pagectl_kill_sb,
 	.fs_flags	= FS_REQUIRES_DEV | FS_ALLOW_IDMAP,
 };
 MODULE_ALIAS_FS("msdos");

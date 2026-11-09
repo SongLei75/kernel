@@ -165,6 +165,37 @@ long fat_generic_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		return fat_ioctl_set_attributes(filp, user_attr);
 	case FAT_IOCTL_GET_VOLUME_ID:
 		return fat_ioctl_get_volume_id(inode, user_attr);
+	case PAGECTL_IOCTL_SET_MODE: {
+		u32 enabled;
+
+		if (get_user(enabled, user_attr))
+			return -EFAULT;
+		if (enabled > 1)
+			return -EINVAL;
+		return pagectl_set_mode(inode->i_sb, enabled);
+	}
+
+	case PAGECTL_IOCTL_FLUSH: {
+		struct pagectl_flush_request request;
+
+		if (!capable(CAP_SYS_ADMIN))
+			return -EPERM;
+		if (copy_from_user(&request, (void __user *)arg,
+				   sizeof(request)))
+			return -EFAULT;
+		if (request.reason > PAGECTL_FLUSH_PRESSURE)
+			return -EINVAL;
+		if (request.kind == PAGECTL_FLUSH_DATA) {
+			if (request.end > LLONG_MAX)
+				return -EINVAL;
+			return pagectl_flush_folios(inode->i_sb, filp->f_mapping,
+				request.start, request.end, request.reason);
+		}
+		if (request.kind == PAGECTL_FLUSH_BUFFER)
+			return pagectl_flush_buffers(inode->i_sb,
+				request.start, request.end, request.reason);
+		return -EINVAL;
+	}
 	case FITRIM:
 		return fat_ioctl_fitrim(inode, arg);
 	default:
@@ -188,6 +219,10 @@ int fat_file_fsync(struct file *filp, loff_t start, loff_t end, int datasync)
 	struct inode *inode = filp->f_mapping->host;
 	int err;
 
+	/* Do not report durable success while modified pages are hidden. */
+	if (pagectl_has_pending(inode->i_sb))
+		return -EOPNOTSUPP;
+
 	err = __generic_file_fsync(filp, start, end, datasync);
 	if (err)
 		return err;
@@ -200,11 +235,39 @@ int fat_file_fsync(struct file *filp, loff_t start, loff_t end, int datasync)
 }
 
 
+static ssize_t fat_pagectl_read_iter(struct kiocb *iocb,
+				      struct iov_iter *to)
+{
+	if ((iocb->ki_flags & IOCB_DIRECT) &&
+	    pagectl_enabled(file_inode(iocb->ki_filp)->i_sb))
+		return -EOPNOTSUPP;
+	return generic_file_read_iter(iocb, to);
+}
+
+static ssize_t fat_pagectl_write_iter(struct kiocb *iocb,
+				       struct iov_iter *from)
+{
+	if ((iocb->ki_flags & IOCB_DIRECT) &&
+	    pagectl_enabled(file_inode(iocb->ki_filp)->i_sb))
+		return -EOPNOTSUPP;
+	return generic_file_write_iter(iocb, from);
+}
+
+static int fat_pagectl_mmap(struct file *file,
+			    struct vm_area_struct *vma)
+{
+	if ((vma->vm_flags & VM_SHARED) &&
+	    (vma->vm_flags & VM_MAYWRITE) &&
+	    pagectl_enabled(file_inode(file)->i_sb))
+		return -EOPNOTSUPP;
+	return generic_file_mmap(file, vma);
+}
+
 const struct file_operations fat_file_operations = {
 	.llseek		= generic_file_llseek,
-	.read_iter	= generic_file_read_iter,
-	.write_iter	= generic_file_write_iter,
-	.mmap		= generic_file_mmap,
+	.read_iter	= fat_pagectl_read_iter,
+	.write_iter	= fat_pagectl_write_iter,
+	.mmap		= fat_pagectl_mmap,
 	.release	= fat_file_release,
 	.unlocked_ioctl	= fat_generic_ioctl,
 	.compat_ioctl	= compat_ptr_ioctl,

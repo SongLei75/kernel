@@ -912,7 +912,7 @@ static int vfat_update_dotdot_de(struct inode *dir, struct inode *inode,
 				 struct msdos_dir_entry *dotdot_de)
 {
 	fat_set_start(dotdot_de, MSDOS_I(dir)->i_logstart);
-	mark_buffer_dirty_inode(dotdot_bh, inode);
+	pagectl_mark_buffer_dirty_inode(dotdot_bh, inode);
 	if (IS_DIRSYNC(dir))
 		return sync_dirty_buffer(dotdot_bh);
 	return 0;
@@ -1207,11 +1207,17 @@ static struct dentry *vfat_mount(struct file_system_type *fs_type,
 	return mount_bdev(fs_type, flags, dev_name, data, vfat_fill_super);
 }
 
+static void vfat_pagectl_kill_sb(struct super_block *sb)
+{
+	pagectl_shutdown(sb);
+	kill_block_super(sb);
+}
+
 static struct file_system_type vfat_fs_type = {
 	.owner		= THIS_MODULE,
 	.name		= "vfat",
 	.mount		= vfat_mount,
-	.kill_sb	= kill_block_super,
+	.kill_sb	= vfat_pagectl_kill_sb,
 	.fs_flags	= FS_REQUIRES_DEV | FS_ALLOW_IDMAP,
 };
 MODULE_ALIAS_FS("vfat");

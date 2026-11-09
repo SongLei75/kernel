@@ -61,7 +61,7 @@ static inline void fat_dir_readahead(struct inode *dir, sector_t iblock,
 	if (!is_fat32(sbi) && (dir->i_ino == MSDOS_ROOT_INO))
 		return;
 
-	bh = sb_find_get_block(sb, phys);
+	bh = pagectl_sb_find_get_block(sb, phys);
 	if (bh == NULL || !buffer_uptodate(bh)) {
 		for (sec = 0; sec < sbi->sec_per_clus; sec++)
 			sb_breadahead(sb, phys + sec);
@@ -97,7 +97,7 @@ next:
 
 	fat_dir_readahead(dir, iblock, phys);
 
-	*bh = sb_bread(sb, phys);
+	*bh = pagectl_sb_bread(sb, phys);
 	if (*bh == NULL) {
 		fat_msg_ratelimit(sb, KERN_ERR,
 			"Directory bread(block %llu) failed", (llu)phys);
@@ -1012,7 +1012,7 @@ static int __fat_remove_entries(struct inode *dir, loff_t pos, int nr_slots)
 			de++;
 			nr_slots--;
 		}
-		mark_buffer_dirty_inode(bh, dir);
+		pagectl_mark_buffer_dirty_inode(bh, dir);
 		if (IS_DIRSYNC(dir))
 			err = sync_dirty_buffer(bh);
 		brelse(bh);
@@ -1047,7 +1047,7 @@ int fat_remove_entries(struct inode *dir, struct fat_slot_info *sinfo)
 		de--;
 		nr_slots--;
 	}
-	mark_buffer_dirty_inode(bh, dir);
+	pagectl_mark_buffer_dirty_inode(bh, dir);
 	if (IS_DIRSYNC(dir))
 		err = sync_dirty_buffer(bh);
 	brelse(bh);
@@ -1089,7 +1089,7 @@ static int fat_zeroed_cluster(struct inode *dir, sector_t blknr, int nr_used,
 	blknr += nr_used;
 	n = nr_used;
 	while (blknr < last_blknr) {
-		bhs[n] = sb_getblk(sb, blknr);
+		bhs[n] = pagectl_sb_getblk(sb, blknr);
 		if (!bhs[n]) {
 			err = -ENOMEM;
 			goto error;
@@ -1099,7 +1099,7 @@ static int fat_zeroed_cluster(struct inode *dir, sector_t blknr, int nr_used,
 		memset(bhs[n]->b_data, 0, sb->s_blocksize);
 		set_buffer_uptodate(bhs[n]);
 		unlock_buffer(bhs[n]);
-		mark_buffer_dirty_inode(bhs[n], dir);
+		pagectl_mark_buffer_dirty_inode(bhs[n], dir);
 
 		n++;
 		blknr++;
@@ -1146,7 +1146,7 @@ int fat_alloc_new_dir(struct inode *dir, struct timespec64 *ts)
 		goto error;
 
 	blknr = fat_clus_to_blknr(sbi, cluster);
-	bhs[0] = sb_getblk(sb, blknr);
+	bhs[0] = pagectl_sb_getblk(sb, blknr);
 	if (!bhs[0]) {
 		err = -ENOMEM;
 		goto error_free;
@@ -1180,7 +1180,7 @@ int fat_alloc_new_dir(struct inode *dir, struct timespec64 *ts)
 	memset(de + 2, 0, sb->s_blocksize - 2 * sizeof(*de));
 	set_buffer_uptodate(bhs[0]);
 	unlock_buffer(bhs[0]);
-	mark_buffer_dirty_inode(bhs[0], dir);
+	pagectl_mark_buffer_dirty_inode(bhs[0], dir);
 
 	err = fat_zeroed_cluster(dir, blknr, 1, bhs, MAX_BUF_PER_PAGE);
 	if (err)
@@ -1229,7 +1229,7 @@ static int fat_add_new_entries(struct inode *dir, void *slots, int nr_slots,
 		start_blknr = blknr = fat_clus_to_blknr(sbi, cluster[i]);
 		last_blknr = start_blknr + sbi->sec_per_clus;
 		while (blknr < last_blknr) {
-			bhs[n] = sb_getblk(sb, blknr);
+			bhs[n] = pagectl_sb_getblk(sb, blknr);
 			if (!bhs[n]) {
 				err = -ENOMEM;
 				goto error_nomem;
@@ -1242,7 +1242,7 @@ static int fat_add_new_entries(struct inode *dir, void *slots, int nr_slots,
 			memcpy(bhs[n]->b_data, slots, copy);
 			set_buffer_uptodate(bhs[n]);
 			unlock_buffer(bhs[n]);
-			mark_buffer_dirty_inode(bhs[n], dir);
+			pagectl_mark_buffer_dirty_inode(bhs[n], dir);
 			slots += copy;
 			size -= copy;
 			if (!size)
@@ -1344,7 +1344,7 @@ found:
 		for (i = 0; i < long_bhs; i++) {
 			int copy = min_t(int, sb->s_blocksize - offset, size);
 			memcpy(bhs[i]->b_data + offset, slots, copy);
-			mark_buffer_dirty_inode(bhs[i], dir);
+			pagectl_mark_buffer_dirty_inode(bhs[i], dir);
 			offset = 0;
 			slots += copy;
 			size -= copy;
@@ -1355,7 +1355,7 @@ found:
 			/* Fill the short name slot. */
 			int copy = min_t(int, sb->s_blocksize - offset, size);
 			memcpy(bhs[i]->b_data + offset, slots, copy);
-			mark_buffer_dirty_inode(bhs[i], dir);
+			pagectl_mark_buffer_dirty_inode(bhs[i], dir);
 			if (IS_DIRSYNC(dir))
 				err = sync_dirty_buffer(bhs[i]);
 		}

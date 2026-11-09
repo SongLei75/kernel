@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: GPL-2.0
+config PAGECTL
+	tristate "Deferred page dirtying controller"
+	depends on BLOCK
+	help
+	  Build a filesystem-independent controller for delayed dirtying of
+	  native page-cache folios and buffer heads.  Filesystems can use its
+	  exported APIs to keep modified pages out of the normal dirty-page
+	  index until an explicit release decision hands them back to Linux.
+	  Deferred memory is pinned and has no automatic pressure writeback.

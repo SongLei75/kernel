@@ -232,7 +232,7 @@ static int fat_write_begin(struct file *file, struct address_space *mapping,
 	int err;
 
 	*pagep = NULL;
-	err = cont_write_begin(file, mapping, pos, len,
+	err = pagectl_cont_write_begin(file, mapping, pos, len,
 				pagep, fsdata, fat_get_block,
 				&MSDOS_I(mapping->host)->mmu_private);
 	if (err < 0)
@@ -246,7 +246,7 @@ static int fat_write_end(struct file *file, struct address_space *mapping,
 {
 	struct inode *inode = mapping->host;
 	int err;
-	err = generic_write_end(file, mapping, pos, len, copied, pagep, fsdata);
+	err = pagectl_generic_write_end(file, mapping, pos, len, copied, pagep, fsdata);
 	if (err < len)
 		fat_write_failed(mapping, pos + len);
 	if (!(err < 0) && !(MSDOS_I(inode)->i_attrs & ATTR_ARCH)) {
@@ -341,9 +341,16 @@ int fat_block_truncate_page(struct inode *inode, loff_t from)
 	return block_truncate_page(inode->i_mapping, from, fat_get_block);
 }
 
+static void fat_pagectl_invalidate_folio(struct folio *folio,
+				       size_t offset, size_t length)
+{
+	pagectl_invalidate_folio(folio, offset, length);
+	block_invalidate_folio(folio, offset, length);
+}
+
 static const struct address_space_operations fat_aops = {
 	.dirty_folio	= block_dirty_folio,
-	.invalidate_folio = block_invalidate_folio,
+	.invalidate_folio = fat_pagectl_invalidate_folio,
 	.read_folio	= fat_read_folio,
 	.readahead	= fat_readahead,
 	.writepage	= fat_writepage,
@@ -686,7 +693,7 @@ static void fat_set_state(struct super_block *sb,
 		return;
 	}
 
-	bh = sb_bread(sb, 0);
+	bh = pagectl_sb_bread(sb, 0);
 	if (bh == NULL) {
 		fat_msg(sb, KERN_ERR, "unable to read boot sector "
 			"to mark fs as dirty");
@@ -707,7 +714,7 @@ static void fat_set_state(struct super_block *sb,
 			b->fat16.state &= ~FAT_STATE_DIRTY;
 	}
 
-	mark_buffer_dirty(bh);
+	pagectl_mark_buffer_dirty(bh);
 	sync_dirty_buffer(bh);
 	brelse(bh);
 }
@@ -867,7 +874,7 @@ retry:
 		return 0;
 
 	fat_get_blknr_offset(sbi, i_pos, &blocknr, &offset);
-	bh = sb_bread(sb, blocknr);
+	bh = pagectl_sb_bread(sb, blocknr);
 	if (!bh) {
 		fat_msg(sb, KERN_ERR, "unable to read inode block "
 		       "for updating (i_pos %lld)", i_pos);
@@ -897,7 +904,7 @@ retry:
 				  &raw_entry->cdate, &raw_entry->ctime_cs);
 	}
 	spin_unlock(&sbi->inode_hash_lock);
-	mark_buffer_dirty(bh);
+	pagectl_mark_buffer_dirty(bh);
 	err = 0;
 	if (wait)
 		err = sync_dirty_buffer(bh);
@@ -1648,7 +1655,7 @@ int fat_fill_super(struct super_block *sb, void *data, int silent, int isvfat,
 
 	error = -EIO;
 	sb_min_blocksize(sb, 512);
-	bh = sb_bread(sb, 0);
+	bh = pagectl_sb_bread(sb, 0);
 	if (bh == NULL) {
 		fat_msg(sb, KERN_ERR, "unable to read boot sector");
 		goto out_fail;
@@ -1686,7 +1693,7 @@ int fat_fill_super(struct super_block *sb, void *data, int silent, int isvfat,
 		}
 
 		/* Verify that the larger boot sector is fully readable */
-		bh_resize = sb_bread(sb, 0);
+		bh_resize = pagectl_sb_bread(sb, 0);
 		if (bh_resize == NULL) {
 			fat_msg(sb, KERN_ERR, "unable to read boot sector"
 			       " (logical sector size = %lu)",
@@ -1729,7 +1736,7 @@ int fat_fill_super(struct super_block *sb, void *data, int silent, int isvfat,
 		if (sbi->fsinfo_sector == 0)
 			sbi->fsinfo_sector = 1;
 
-		fsinfo_bh = sb_bread(sb, sbi->fsinfo_sector);
+		fsinfo_bh = pagectl_sb_bread(sb, sbi->fsinfo_sector);
 		if (fsinfo_bh == NULL) {
 			fat_msg(sb, KERN_ERR, "bread failed, FSINFO block"
 			       " (sector = %lu)", sbi->fsinfo_sector);

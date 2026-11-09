@@ -74,7 +74,7 @@ int fat_clusters_flush(struct super_block *sb)
 	if (!is_fat32(sbi))
 		return 0;
 
-	bh = sb_bread(sb, sbi->fsinfo_sector);
+	bh = pagectl_sb_bread(sb, sbi->fsinfo_sector);
 	if (bh == NULL) {
 		fat_msg(sb, KERN_ERR, "bread failed in fat_clusters_flush");
 		return -EIO;
@@ -93,7 +93,7 @@ int fat_clusters_flush(struct super_block *sb)
 			fsinfo->free_clusters = cpu_to_le32(sbi->free_clusters);
 		if (sbi->prev_free != -1)
 			fsinfo->next_cluster = cpu_to_le32(sbi->prev_free);
-		mark_buffer_dirty(bh);
+		pagectl_mark_buffer_dirty(bh);
 	}
 	brelse(bh);
 

@@ -20,6 +20,7 @@ config FS_IOMAP
 
 if BLOCK
 
+source "fs/pagectl/Kconfig"
 source "fs/ext2/Kconfig"
 source "fs/ext4/Kconfig"
 source "fs/jbd2/Kconfig"
